@@ -42,15 +42,15 @@ export function DogComponent (
           <Typography>Breed: {breed}</Typography>
           <Typography>Location: {location}</Typography>
           <Typography> Adopted: {
-          useIsPetAdopted({id: id, sorobanContext: sorobanContext})  ? "Yes 🥰!" : "Not yet 😥" 
+          //useIsPetAdopted({id: id, sorobanContext: sorobanContext})  ? "Yes 🥰!" : "Not yet 😥" 
           } </Typography>
         </Typography>
       </CardContent>
-      {useIsPetAdopted({id: id, sorobanContext: sorobanContext})  ? <CardActions>
+      {/* {useIsPetAdopted({id: id, sorobanContext: sorobanContext})  ? <CardActions> */}
       🥰🥰🥰
-      </CardActions>: <CardActions>
+      <CardActions>
         <AdoptPetButton id={id}></AdoptPetButton>
-      </CardActions>}
+      </CardActions>
       
     </Card>
   );
