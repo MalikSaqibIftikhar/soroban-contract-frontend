@@ -112,16 +112,16 @@ export function useSendTransaction<E = Error>(defaultTxn?: Transaction, defaultO
 
     console.log("signing transaction")
     let signed = "";
-    if (true) {
+    if (passedOptions?.secretKey) {
       // User as set a secretKey, txn will be signed using the secretKey
-      const keypair = SorobanClient.Keypair.fromSecret("SBAYNCPCWBWOCBT2CQYVAXTOTPYJ3B2R6Q7QJJ6BXSJYDXFJLQKNQPWH");
+      const keypair = SorobanClient.Keypair.fromSecret(passedOptions.secretKey);
       txn.sign(keypair);
       signed = txn.toXDR();
     } 
-    // else {
-    //   // User has not set a secretKey, txn will be signed using the Connector (wallet) provided in the sorobanContext
-    //   signed = await activeConnector.signTransaction(txn.toXDR(), { networkPassphrase });
-    // }
+    else {
+      // User has not set a secretKey, txn will be signed using the Connector (wallet) provided in the sorobanContext
+      signed = await activeConnector.signTransaction(txn.toXDR(), { networkPassphrase });
+    }
 
     console.log("submitting transaction")
     const transactionToSubmit = SorobanClient.TransactionBuilder.fromXDR(signed, networkPassphrase);

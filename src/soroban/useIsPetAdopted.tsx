@@ -1,7 +1,7 @@
 import { SorobanContextType } from '@soroban-react/core';
 import addresses from './addresses.json'
 import {useContractValue} from '@soroban-react/contracts'
-import { numberToU32, scvalToBool } from '@soroban-react/utils'
+import { numberToU32, scvalToBool  } from '@soroban-react/utils'
 import * as SorobanClient from 'soroban-client';
 
 interface IsPetAdoptedProps {
@@ -20,6 +20,14 @@ export async function useIsPetAdopted ({id, sorobanContext}: IsPetAdoptedProps){
                 method: 'get_base_uri',
                 sorobanContext: sorobanContext,
             }).result
+            
+            // let nft_id = SorobanClient.xdr.ScVal.scvU32(0)
+            // isAdopted_scval = await useContractValue({
+            //     contractId: addresses.pet_adopt_id,
+            //     method: 'get_nft',
+            //     sorobanContext: sorobanContext,
+            //     params: [nft_id]
+            // }).result
 
             // isAdopted_scval = await useContractValue({
             //     contractId: addresses.pet_adopt_id,
