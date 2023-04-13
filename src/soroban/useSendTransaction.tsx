@@ -51,32 +51,46 @@ export interface SendTransactionOptions {
   timeout?: number;
   skipAddingFootprint?: boolean
   secretKey?: string;
-  sorobanContext: SorobanContextType
+  sorobanContext?: SorobanContextType
 }
 
 // useSendTransaction is a hook that returns a function that can be used to
 // send a transaction. Upon sending, it will poll server.getTransactionStatus,
 // until the transaction succeeds/fails, and return the result.
 export function useSendTransaction<E = Error>(defaultTxn?: Transaction, defaultOptions?: SendTransactionOptions): SendTransactionResult<E> {
-    console.log("thissssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss")
-    if (!defaultOptions) {
-      throw new Error("No sorobanContext passed to sendTransaction");
-    }
+  
 
-    const sorobanContext =  defaultOptions.sorobanContext
-    const { activeChain, activeConnector , server } = sorobanContext
-    const [status, setState] = React.useState<TransactionStatus>('idle');
+  const [status, setState] = React.useState<TransactionStatus>('idle');
   
-  
+  // TODO: as the sorobanContext is passed each time sendTransaction is called
+  // we don't need anymore a useCallback hook. Convert useSendTransaction to a 
   const sendTransaction = React.useCallback(async function(passedTxn?: Transaction, passedOptions?: SendTransactionOptions): Promise<SorobanClient.xdr.ScVal> {
+    
+    // console.log("passedTxn: ", passedTxn)
+    // console.log("passedOptions: ", passedOptions)
 
-    console.log("I'm going to use send trnasaction.........................ssssssssssssssssssssssssssssssss")
+    let sorobanContext : SorobanContextType | undefined 
+    
+    if(passedOptions?.sorobanContext){
+      sorobanContext =  passedOptions?.sorobanContext
+    }
     let txn = passedTxn ?? defaultTxn;
-    if (!txn || !activeConnector || !activeChain) {
+    // console.log("sorobanContext.activeConnector: ", sorobanContext?.activeConnector)
+    // console.log("sorobanContext.activeChain: ", sorobanContext?.activeChain)
+    
+    if (!(passedOptions?.secretKey|| sorobanContext?.activeConnector)){
+      throw new Error("No secret key or active wallet. Provide at least one of those");
+    }
+    
+    if (!txn || !sorobanContext?.activeConnector || !sorobanContext?.activeChain) {
       throw new Error("No transaction or wallet or chain");
     }
-
-    if (!server) throw new Error("Not connected to server")
+    
+    if (!sorobanContext.server) throw new Error("Not connected to server")
+    
+    let activeChain = sorobanContext?.activeChain
+    let activeConnector = sorobanContext?.activeConnector
+    let server = sorobanContext?.server
 
     const {
       timeout,
@@ -90,45 +104,96 @@ export function useSendTransaction<E = Error>(defaultTxn?: Transaction, defaultO
     const networkPassphrase = activeChain.networkPassphrase;
     setState('loading');
 
+    console.log("preparing transaction")
     // preflight and add the footprint
-    // if (!skipAddingFootprint) {
-    //   let {footprint} = await server.simulateTransaction(txn);
-    //   txn = addFootprint(txn, networkPassphrase, footprint);
-    // }
-
-    let signed = "";
-    if (passedOptions?.secretKey) {
-      const keypair = SorobanClient.Keypair.fromSecret(passedOptions.secretKey);
-      txn.sign(keypair);
-      signed = txn.toXDR();
-    } else {
-      signed = await activeConnector.signTransaction(txn.toXDR(), { networkPassphrase });
+    if (!skipAddingFootprint) {
+      txn = await server.prepareTransaction(txn, networkPassphrase);
     }
 
+    console.log("signing transaction")
+    let signed = "";
+    if (true) {
+      // User as set a secretKey, txn will be signed using the secretKey
+      const keypair = SorobanClient.Keypair.fromSecret("SBAYNCPCWBWOCBT2CQYVAXTOTPYJ3B2R6Q7QJJ6BXSJYDXFJLQKNQPWH");
+      txn.sign(keypair);
+      signed = txn.toXDR();
+    } 
+    // else {
+    //   // User has not set a secretKey, txn will be signed using the Connector (wallet) provided in the sorobanContext
+    //   signed = await activeConnector.signTransaction(txn.toXDR(), { networkPassphrase });
+    // }
+
+    console.log("submitting transaction")
     const transactionToSubmit = SorobanClient.TransactionBuilder.fromXDR(signed, networkPassphrase);
-    console.log("SENDDDDDDDDDDDDDDDDDDDINGGGGGGGGGGGGGGGGGGGGG TRANSACTION")
-    const transaction = await server.sendTransaction(transactionToSubmit);
-    console.log("SENTTTTTTTTTTTTTT TRANSACTION")
+    const { hash, errorResultXdr } = await server.sendTransaction(transactionToSubmit);
+    if (errorResultXdr) {
+      setState('error');
+      throw new Error(errorResultXdr);
+    }
     const sleepTime = Math.min(1000, timeout);
     for (let i = 0; i <= timeout; i+= sleepTime) {
       await sleep(sleepTime);
       try {
-        const response = await server.getTransaction(transaction.hash);
-        console.log("TRANSACTION STATUSSSSSSSSSSSSSSSSSSSSSSSSSS",response.status.toString())
-        switch (response.status.toString()) {
+        console.debug("tx id:", hash)
+        const response = await server.getTransaction(hash);
+        console.debug(response)
+
+        switch (response.status) {
         case "NOT_FOUND": {
             continue;
           }
         case "SUCCESS": {
-            if (response.resultXdr?.length != 1) {
-              throw new Error("Expected exactly one result");
-            }
             setState('success');
-            return SorobanClient.xdr.ScVal.fromXDR(Buffer.from(response.resultXdr[0], 'base64'));
+            let resultXdr = response.resultXdr
+            if (!resultXdr) {
+              // FIXME: Return a more sensible value for classic transactions.
+              return SorobanClient.xdr.ScVal.scvI32(-1)
+            }
+            let results = SorobanClient.xdr.TransactionResult.fromXDR(resultXdr, 'base64').result().results()
+            if (results.length > 1) {
+              throw new Error(`Expected exactly one result, got ${results}.`);
+            }
+
+            let value = results[0].value();
+            if (value?.switch() !== SorobanClient.xdr.OperationType.invokeHostFunction()) {
+              // FIXME: Return a more sensible value for classic transactions.
+              return SorobanClient.xdr.ScVal.scvI32(-1)
+            }
+
+            console.log(response);
+            console.log("SUCCESSFULLY COMPLETED TRANSACTION")
+            return value.invokeHostFunctionResult().success();
           }
         case "FAILED": {
             setState('error');
-            throw response.status;
+            let resultXdr = response.resultXdr
+            if (!resultXdr) {
+              // FIXME: Return a more sensible value for classic transactions.
+              return SorobanClient.xdr.ScVal.scvI32(-1)
+            }
+            let results = SorobanClient.xdr.TransactionResult.fromXDR(resultXdr, 'base64').result().results()
+            if (results.length > 1) {
+              throw new Error(`Expected exactly one result, got ${results}.`);
+            }
+
+            let value = results[0].value();
+            if (value?.switch() !== SorobanClient.xdr.OperationType.invokeHostFunction()) {
+              // FIXME: Return a more sensible value for classic transactions.
+              return SorobanClient.xdr.ScVal.scvI32(-1)
+            }
+
+            let result = value.invokeHostFunctionResult()
+            switch (result.switch()) {
+            case SorobanClient.xdr.InvokeHostFunctionResultCode.invokeHostFunctionMalformed(): {
+              throw new Error("Transaction failed: malformed");
+            }
+            case SorobanClient.xdr.InvokeHostFunctionResultCode.invokeHostFunctionTrapped(): {
+              throw new Error("Transaction failed: trapped");
+            }
+            default: {
+              throw new Error(`Unexpected result code: ${result.switch().name}.`);
+            }
+            }
           }
         default: {
             throw new Error("Unexpected transaction status: " + response.status);
@@ -144,7 +209,7 @@ export function useSendTransaction<E = Error>(defaultTxn?: Transaction, defaultO
       }
     }
     throw new Error("Timed out");
-  }, [activeConnector, activeChain, defaultTxn]);
+  }, [defaultTxn]);
 
   return {
     isIdle: status == 'idle',
@@ -156,42 +221,6 @@ export function useSendTransaction<E = Error>(defaultTxn?: Transaction, defaultO
     status,
   };
 }
-
-// TODO: Transaction is immutable, so we need to re-build it here. :(
-// function addFootprint(raw: Transaction, networkPassphrase: string, result: SorobanClient.SorobanRpc.SimulateTransactionResponse['results']): Transaction {
-//   if ('innerTransaction' in raw) {
-//     // TODO: Handle feebump transactions
-//     return addFootprint(raw.innerTransaction, networkPassphrase, result ? result[0].footprint : {xd);
-//   }
-//   // TODO: Figure out a cleaner way to clone this transaction.
-//   const source = new SorobanClient.Account(raw.source, `${parseInt(raw.sequence)-1}`);
-//   const txn = new SorobanClient.TransactionBuilder(source, {
-//     fee: raw.fee,
-//     memo: raw.memo,
-//     networkPassphrase,
-//     timebounds: raw.timeBounds,
-//     ledgerbounds: raw.ledgerBounds,
-//     minAccountSequence: raw.minAccountSequence,
-//     minAccountSequenceAge: raw.minAccountSequenceAge,
-//     minAccountSequenceLedgerGap: raw.minAccountSequenceLedgerGap,
-//     extraSigners: raw.extraSigners,
-//   });
-//   for (let rawOp of raw.operations) {
-//     if ('function' in rawOp) {
-//       // TODO: Figure out a cleaner way to clone these operations
-//       txn.addOperation(SorobanClient.Operation.invokeHostFunction({
-//         function: rawOp.function,
-//         parameters: rawOp.parameters,
-//         footprint: SorobanClient.xdr.LedgerFootprint.fromXDR(footprint, 'base64'),
-        
-//       }));
-//     } else {
-//       // TODO: Handle this.
-//       throw new Error("Unsupported operation type");
-//     }
-//   }
-//   return txn.build();
-// }
 
 async function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
